@@ -12,6 +12,7 @@
   "dependencies": {
     "@starcoin/starcoin": "^2.1.5",
     "minimist": "^1.2.6",
-    "mysql": "^2.18.1"
+    "mysql": "^2.18.1",
+    "winston": "^3.7.2"
   }
 }
