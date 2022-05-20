@@ -93,16 +93,25 @@ const doJob = () => {
             // amounts.push(row.amount * STC_SCALLING_FACTOR)
             amounts.push(0.01 * STC_SCALLING_FACTOR)
         });
+        connection.query('update faucet_address set transfer_retry = 1 where id in (?)', [ids], (err, rows) => {
+            if (err) throw err;
+            const sender = SENDERS[senderIndex]
+            batchTransfer(network, sender, addresses, amounts).then((errorMessage) => {
+                if (errorMessage !== '') {
+                    logger.error(errorMessage)
+                }
+                logger.info('---Job finished---')
+            })
+            const status = '20'
+            connection.query('update faucet_address set status = ? where id in (?)', [status, ids], (err, rows) => {
+                if (err) throw err;
+                connection.end();
+            })
 
-        const sender = SENDERS[senderIndex]
-        batchTransfer(network, sender, addresses, amounts).then((errorMessage) => {
-            if (errorMessage !== '') {
-                logger.error(errorMessage)
-            }
-            logger.info('---Job finished---')
         })
+
     });
-    connection.end();
+
 }
 
 const checkBalance = async (provider, senderAddress, amountArray) => {
@@ -115,6 +124,7 @@ const checkBalance = async (provider, senderAddress, amountArray) => {
     if (senderBalance < 1000 * STC_SCALLING_FACTOR) {
         alertAdmin('Sender balance is less than 1000 STC')
     }
+    // Assuming maximum gas fee is 1 STC
     if ((amountTotal + (1 * STC_SCALLING_FACTOR)) < senderBalance) {
         return true
     }
