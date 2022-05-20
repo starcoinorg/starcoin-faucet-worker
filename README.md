@@ -6,8 +6,13 @@ export STARCOIN_FAUCET_WORKER_MYSQL_PORT=3306
 export STARCOIN_FAUCET_WORKER_MYSQL_USER=
 export STARCOIN_FAUCET_WORKER_MYSQL_PWD=
 export STARCOIN_FAUCET_WORKER_MYSQL_DB=
-export STARCOIN_FAUCET_WORKER_SENDERS=[{\"address\":xxx\"\",\"privateKey\":\"xxx\"},{\"address\":yyy\"\",\"privateKey\":\"yyy\"}]
+export STARCOIN_FAUCET_WORKER_SENDERS=[{\"address\":ADDRESS1\"\",\"privateKey\":\"PRIVATEKEY1\"},{\"address\":ADDRESS2\"\",\"privateKey\":\"PRIVATEKEY2\"}]
+export STARCOIN_FAUCET_WORKER_EMAIL_SENDER=
+export STARCOIN_FAUCET_WORKER_EMAIL_SENDER_PWD=
+export STARCOIN_FAUCET_WORKER_EMAIL_RECEIVERS=[\"EMAIL1\",\"EMAIL2\"]
 ```
+
+Tips: [Generate Google account app passwords](https://stackoverflow.com/a/45479968/12454870)
 
 # Install
 

@@ -3,6 +3,39 @@ const minimist = require('minimist');
 const { utils, providers } = require('@starcoin/starcoin')
 const { createLogger, format, transports } = require("winston");
 const { combine, label, timestamp, printf } = format;
+const nodemailer = require('nodemailer');
+
+const emailSender = process.env.STARCOIN_FAUCET_WORKER_EMAIL_SENDER || ''
+const emailSenderPwd = process.env.STARCOIN_FAUCET_WORKER_EMAIL_SENDER_PWD || ''
+const emailReceivers = JSON.parse(process.env.STARCOIN_FAUCET_WORKER_EMAIL_RECEIVERS || []).join(",")
+
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: emailSender,
+        pass: emailSenderPwd
+    }
+});
+
+
+
+const alertAdmin = (message) => {
+    //  send email
+    const mailOptions = {
+        from: 'Faucet Worker',
+        to: emailReceivers,
+        subject: message,
+        text: message
+    };
+    transporter.sendMail(mailOptions, function (error, info) {
+        if (error) {
+            logger.error(error);
+        } else {
+            logger.info('Email sent: ' + info.response);
+        }
+    });
+    //  TODO: call discord/twitter api
+}
 
 const loggerFormat = printf(info => `${ info.timestamp } [${ info.level }]: ${ typeof info.message === 'object' ? JSON.stringify(info.message) : info.message }`);
 
@@ -80,7 +113,7 @@ const checkBalance = async (provider, senderAddress, amountArray) => {
     const senderBalance = await provider.getBalance(senderAddress)
     // alert balance will be not enough
     if (senderBalance < 1000 * STC_SCALLING_FACTOR) {
-        //  TODO: send email or discord/twitter api
+        alertAdmin('Sender balance is less than 1000 STC')
     }
     if ((amountTotal + (1 * STC_SCALLING_FACTOR)) < senderBalance) {
         return true
