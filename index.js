@@ -48,7 +48,7 @@ const doJob = () => {
             logger.info('No rows to handle!')
             return;
         }
-        logger.info(`${ rows.length } records founded.`)
+        logger.info(`${ rows.length } records found.`)
         const ids = []
         const addresses = []
         const amounts = []
@@ -62,27 +62,54 @@ const doJob = () => {
         });
 
         const sender = SENDERS[senderIndex]
-        batchTransfer(network, sender, addresses, amounts)
+        batchTransfer(network, sender, addresses, amounts).then((errorMessage) => {
+            if (errorMessage !== '') {
+                logger.error(errorMessage)
+            }
+            logger.info('---Job finished---')
+        })
     });
     connection.end();
 }
 
+const checkBalance = async (provider, senderAddress, amountArray) => {
+    const amountTotal = amountArray.reduce(
+        (previous, current) => previous + current,
+        0
+    );
+    const senderBalance = await provider.getBalance(senderAddress)
+    // alert balance will be not enough
+    if (senderBalance < 1000 * STC_SCALLING_FACTOR) {
+        //  TODO: send email or discord/twitter api
+    }
+    if ((amountTotal + (1 * STC_SCALLING_FACTOR)) < senderBalance) {
+        return true
+    }
+    return false
+}
+
 const batchTransfer = async (network, sender, addressArray, amountArray) => {
-    const { address, privateKey } = sender
+    const { address: senderAddress, privateKey: senderPrivateKey } = sender
+    const nodeUrl = `https://${ network }-seed.starcoin.org`
+    const provider = new providers.JsonRpcProvider(nodeUrl);
+
+    // check balance
+    const isOk = await checkBalance(provider, senderAddress, amountArray)
+    if (!isOk) {
+        return 'sender balance is not enough'
+    }
     const functionId = '0x1::TransferScripts::batch_peer_to_peer_v2'
     const typeArgs = ['0x1::STC::STC']
     const args = [addressArray, amountArray]
 
-    const nodeUrl = `https://${ network }-seed.starcoin.org`
     const scriptFunction = await utils.tx.encodeScriptFunctionByResolve(functionId, typeArgs, args, nodeUrl);
 
-    const provider = new providers.JsonRpcProvider(nodeUrl);
-    const senderSequenceNumber = await provider.getSequenceNumber(address)
+    const senderSequenceNumber = await provider.getSequenceNumber(senderAddress)
     const chainId = NETWORK_MAP[network];
     const nowSeconds = await provider.getNowSeconds();
 
     const rawUserTransaction = utils.tx.generateRawUserTransaction(
-        address,
+        senderAddress,
         scriptFunction,
         10000000,
         1,
@@ -92,7 +119,7 @@ const batchTransfer = async (network, sender, addressArray, amountArray) => {
     );
 
     const signedUserTransactionHex = await utils.tx.signRawUserTransaction(
-        privateKey,
+        senderPrivateKey,
         rawUserTransaction,
     );
 
@@ -106,8 +133,7 @@ const batchTransfer = async (network, sender, addressArray, amountArray) => {
     logger.info(`status: ${ txnInfo.status }`)
     logger.info(`gas_used: ${ txnInfo.gas_used }`)
     logger.info(`block_number: ${ txnInfo.block_number }`)
-
-    logger.info('---Job finished---')
+    return ''
 }
 
 const connection = mysql.createConnection({
