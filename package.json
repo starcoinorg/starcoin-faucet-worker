@@ -12,7 +12,6 @@
   "dependencies": {
     "@starcoin/starcoin": "^2.1.5",
     "minimist": "^1.2.6",
-    "mysql": "^2.18.1",
     "mysql2": "^2.3.3",
     "nodemailer": "^6.7.5",
     "winston": "^3.7.2"
