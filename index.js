@@ -140,7 +140,7 @@ const checkBalance = async (provider, senderAddress, amountArray) => {
     const senderBalance = await provider.getBalance(senderAddress)
     // alert balance will be not enough
     if (senderBalance < 1000 * STC_SCALLING_FACTOR) {
-        alertAdmin('Sender balance is less than 1000 STC')
+        alertAdmin(`Sender ${ senderAddress } balance is less than 1000 STC`)
     }
     // Assuming maximum gas fee is 1 STC
     if ((amountTotal + (1 * STC_SCALLING_FACTOR)) < senderBalance) {
@@ -161,6 +161,11 @@ const readSequenceNumber = async (address) => {
         return data.toString()
     } catch (error) {
         logger.error(`Got an error trying to read the file: ${ error.message }`);
+        const fileDir = path.dirname(filePath)
+        if (!fs.existsSync(fileDir)) {
+            logger.error(`Directory ${ fileDir } not found.`);
+            fs.promises.mkdir(fileDir, { recursive: true });
+        }
         return "-1"
     }
 }
@@ -187,7 +192,7 @@ const batchTransfer = async (network, sender, addressArray, amountArray) => {
     const isOk = await checkBalance(provider, senderAddress, amountArray)
 
     if (!isOk) {
-        return 'sender balance is not enough'
+        return `sender ${ senderAddress } balance is not enough`
     }
     const functionId = '0x1::TransferScripts::batch_peer_to_peer_v2'
     const typeArgs = ['0x1::STC::STC']
@@ -198,9 +203,9 @@ const batchTransfer = async (network, sender, addressArray, amountArray) => {
     const senderSequenceNumber = await provider.getSequenceNumber(senderAddress)
 
     const isSequenceNumberOk = await checkSequenceNumber(senderAddress, senderSequenceNumber)
-    logger.info({ isSequenceNumberOk })
+
     if (!isSequenceNumberOk) {
-        return 'sequenceNumber is not Ok'
+        return `sender ${ senderAddress } sequenceNumber ${ senderSequenceNumber } is used.`
     }
     await updateSequenceNumber(senderAddress, senderSequenceNumber.toString())
 
