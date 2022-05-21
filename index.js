@@ -88,6 +88,9 @@ const checkBalance = async (provider, senderAddress, amountArray) => {
     if ((amountTotal + (1 * STC_SCALLING_FACTOR)) < senderBalance) {
         return true
     }
+
+    alertAdmin(`Sender ${ senderAddress } balance is less than ${ (amountTotal / STC_SCALLING_FACTOR).toFixed(0) } STC`)
+
     return false
 }
 
