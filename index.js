@@ -1,5 +1,7 @@
 const mysql = require('mysql');
 const minimist = require('minimist');
+const fs = require("fs");
+const path = require('path');
 const { utils, providers } = require('@starcoin/starcoin')
 const { createLogger, format, transports } = require("winston");
 const { combine, label, timestamp, printf } = format;
@@ -120,8 +122,24 @@ const doJob = () => {
                             [status, ids],
                             (err, rows) => {
                                 if (err) throw err;
-                                connection.end();
+                                // connection.end();
                                 logger.info('---Job finished---')
+                                // reset data for test
+                                const network = 'barnard'
+                                const nodeUrl = `https://${ network }-seed.starcoin.org`
+                                const provider = new providers.JsonRpcProvider(nodeUrl);
+                                provider.getSequenceNumber(SENDERS[0].address).then((senderSequenceNumber) => {
+                                    logger.info({ senderSequenceNumber })
+                                    connection.query(
+                                        'update faucet_address set status = 0, transfer_retry = 0 where id in (?)',
+                                        [ids],
+                                        (err, rows) => {
+                                            if (err) throw err;
+                                            connection.end();
+                                            logger.info('---Data reseted---')
+                                        }
+                                    )
+                                })
                             }
                         )
                     })
@@ -148,6 +166,36 @@ const checkBalance = async (provider, senderAddress, amountArray) => {
     return false
 }
 
+const getFileName = (address) => {
+    return `data/${ address }.txt`
+}
+
+const readSequenceNumber = async (address) => {
+    const filePath = getFileName(address)
+
+    try {
+        const data = await fs.promises.readFile(filePath);
+        console.log(data.toString());
+        return data.toString()
+    } catch (error) {
+        console.error(`Got an error trying to read the file: ${ error.message }`);
+        return "-1"
+    }
+}
+
+const updateSequenceNumber = async (address, content) => {
+    const filePath = getFileName(address)
+    await fs.promises.writeFile(filePath, content)
+}
+
+const checkSequenceNumber = async (senderAddress, senderSequenceNumber) => {
+    const oldSequenceNumber = await readSequenceNumber(senderAddress)
+
+    if (Number(oldSequenceNumber) < senderSequenceNumber) {
+        return true
+    }
+    return false
+}
 const batchTransfer = async (network, sender, addressArray, amountArray) => {
     const { address: senderAddress, privateKey: senderPrivateKey } = sender
     const nodeUrl = `https://${ network }-seed.starcoin.org`
@@ -155,6 +203,7 @@ const batchTransfer = async (network, sender, addressArray, amountArray) => {
 
     // check balance
     const isOk = await checkBalance(provider, senderAddress, amountArray)
+
     if (!isOk) {
         return 'sender balance is not enough'
     }
@@ -165,6 +214,14 @@ const batchTransfer = async (network, sender, addressArray, amountArray) => {
     const scriptFunction = await utils.tx.encodeScriptFunctionByResolve(functionId, typeArgs, args, nodeUrl);
 
     const senderSequenceNumber = await provider.getSequenceNumber(senderAddress)
+
+    const isSequenceNumberOk = await checkSequenceNumber(senderAddress, senderSequenceNumber)
+    logger.info({ isSequenceNumberOk })
+    if (!isSequenceNumberOk) {
+        return 'sequenceNumber is not Ok'
+    }
+    await updateSequenceNumber(senderAddress, senderSequenceNumber.toString())
+
     const chainId = NETWORK_MAP[network];
     const nowSeconds = await provider.getNowSeconds();
 
@@ -193,6 +250,7 @@ const batchTransfer = async (network, sender, addressArray, amountArray) => {
     logger.info(`status: ${ txnInfo.status }`)
     logger.info(`gas_used: ${ txnInfo.gas_used }`)
     logger.info(`block_number: ${ txnInfo.block_number }`)
+
     return ''
 }
 
