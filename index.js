@@ -120,54 +120,50 @@ const updateSequenceNumber = async (address, content) => {
     await fs.promises.writeFile(filePath, content)
 }
 
-const checkSequenceNumber = async (senderAddress, currentSenderSequenceNumber) => {
-    const oldSequenceNumber = await readSequenceNumber(senderAddress)
-    if (Number(oldSequenceNumber) < currentSenderSequenceNumber) {
-        return true
+const batchTransfer = async (nodeUrl, provider, chainId, senderAddress, senderPrivateKey, senderSequenceNumber, addressArray, amountArray) => {
+    try {
+        const functionId = '0x1::TransferScripts::batch_peer_to_peer_v2'
+        const typeArgs = ['0x1::STC::STC']
+        const args = [addressArray, amountArray]
+
+        const scriptFunction = await utils.tx.encodeScriptFunctionByResolve(functionId, typeArgs, args, nodeUrl);
+
+        const nowSeconds = await provider.getNowSeconds();
+
+        const rawUserTransaction = utils.tx.generateRawUserTransaction(
+            senderAddress,
+            scriptFunction,
+            10000000,
+            1,
+            senderSequenceNumber,
+            nowSeconds + 43200,
+            chainId,
+        );
+
+        const signedUserTransactionHex = await utils.tx.signRawUserTransaction(
+            senderPrivateKey,
+            rawUserTransaction,
+        );
+
+        const txn = await provider.sendTransaction(signedUserTransactionHex);
+
+        logger.info(`transaction_hash: ${ txn.transaction_hash }`)
+        logger.info(`sequence_number: ${ txn.raw_txn.sequence_number }`)
+
+        const txnInfo = await txn.wait(1);
+
+        logger.info(`status: ${ txnInfo.status }`)
+        logger.info(`gas_used: ${ txnInfo.gas_used }`)
+        logger.info(`block_number: ${ txnInfo.block_number }`)
+
+        return ['', txn.transaction_hash]
+    } catch (error) {
+        logger.error(error)
+        return [error, null]
     }
-    return false
 }
 
-const batchTransfer = async (nodeUrl, provider, network, senderAddress, senderPrivateKey, senderSequenceNumber, addressArray, amountArray) => {
-    const functionId = '0x1::TransferScripts::batch_peer_to_peer_v2'
-    const typeArgs = ['0x1::STC::STC']
-    const args = [addressArray, amountArray]
-
-    const scriptFunction = await utils.tx.encodeScriptFunctionByResolve(functionId, typeArgs, args, nodeUrl);
-
-    const chainId = NETWORK_MAP[network];
-    const nowSeconds = await provider.getNowSeconds();
-
-    const rawUserTransaction = utils.tx.generateRawUserTransaction(
-        senderAddress,
-        scriptFunction,
-        10000000,
-        1,
-        senderSequenceNumber,
-        nowSeconds + 43200,
-        chainId,
-    );
-
-    const signedUserTransactionHex = await utils.tx.signRawUserTransaction(
-        senderPrivateKey,
-        rawUserTransaction,
-    );
-
-    const txn = await provider.sendTransaction(signedUserTransactionHex);
-
-    logger.info(`transaction_hash: ${ txn.transaction_hash }`)
-    logger.info(`sequence_number: ${ txn.raw_txn.sequence_number }`)
-
-    const txnInfo = await txn.wait(1);
-
-    logger.info(`status: ${ txnInfo.status }`)
-    logger.info(`gas_used: ${ txnInfo.gas_used }`)
-    logger.info(`block_number: ${ txnInfo.block_number }`)
-
-    return ['', txn.transaction_hash]
-}
-
-async function getNewRecords(pool, limit) {
+const getNewRecords = async (pool, limit) => {
     // Only handle the records: status = 0 and transfer_retry = 0
     try {
         const result = await pool.query(
@@ -181,9 +177,8 @@ async function getNewRecords(pool, limit) {
     }
 }
 
-async function updateRecordStatus(pool, ids) {
+const updateRecordHandling = async (pool, ids) => {
     try {
-        console.log('updateRecordStatus', ids)
         await pool.query(
             'update faucet_address set status = ? where id in (?)',
             [STATUS['HANDLING'], ids]
@@ -194,9 +189,8 @@ async function updateRecordStatus(pool, ids) {
     }
 }
 
-async function updateRecordTxn(pool, ids, txn) {
+const updateRecordTxn = async (pool, ids, txn) => {
     try {
-        console.log('updateRecordStatus', ids)
         await pool.query(
             'update faucet_address set status = ?, transfered_txn=? where id in (?)',
             [STATUS['SUCCEED'], txn, ids]
@@ -207,16 +201,16 @@ async function updateRecordTxn(pool, ids, txn) {
     }
 }
 
-async function main() {
+const main = async () => {
     const pool = mysql.createPool({
         host: MYSQL_HOST,
         user: MYSQL_USER,
         password: MYSQL_PWD,
         database: MYSQL_DB
     });
+    let oldSequenceNumber, currentSenderSequenceNumber, senderAddress, senderPrivateKey
     try {
         logger.info('---Job start---')
-
         const args = minimist(process.argv.slice(2))
         const senderIndex = args['senderIndex'] || 0
         const limit = args['count'] || 5
@@ -243,16 +237,17 @@ async function main() {
 
         const sender = SENDERS[senderIndex]
 
-        const { address: senderAddress, privateKey: senderPrivateKey } = sender
-
+        senderAddress = sender.address
+        senderPrivateKey = sender.privateKey
         // check sequenceNumber
-        const senderSequenceNumber = await provider.getSequenceNumber(senderAddress)
-        const isSequenceNumberOk = await checkSequenceNumber(senderAddress, senderSequenceNumber)
-        if (!isSequenceNumberOk) {
-            logger.error(`sender ${ senderAddress } sequenceNumber ${ senderSequenceNumber } is used.`)
+        oldSequenceNumber = await readSequenceNumber(senderAddress)
+        currentSenderSequenceNumber = await provider.getSequenceNumber(senderAddress)
+        console.log({ oldSequenceNumber, currentSenderSequenceNumber })
+        if (!(Number(oldSequenceNumber) < currentSenderSequenceNumber)) {
+            logger.error(`sender ${ senderAddress } sequenceNumber ${ currentSenderSequenceNumber } is used.`)
             return;
         }
-        await updateSequenceNumber(senderAddress, senderSequenceNumber.toString())
+        await updateSequenceNumber(senderAddress, currentSenderSequenceNumber.toString())
 
 
         // check balance
@@ -263,27 +258,33 @@ async function main() {
         }
 
         // update status=1
-        const error = await updateRecordStatus(pool, ids)
+        const error = await updateRecordHandling(pool, ids)
         if (error) {
-            logger.error(`Error occurs while updateRecordStatus = ${ STATUS['HANDLING'] }, ids in ${ ids }`)
+            logger.error(`Error occurs while updateRecordHandling, ids in ${ ids }`)
             return
         }
 
-        const [errorMessage, txn] = await batchTransfer(nodeUrl, provider, network, senderAddress, senderPrivateKey, senderSequenceNumber, addresses, amounts)
-        console.log({ errorMessage, txn })
+        const [errorMessage, txn] = await batchTransfer(nodeUrl, provider, NETWORK_MAP[network], senderAddress, senderPrivateKey, currentSenderSequenceNumber, addresses, amounts)
         if (errorMessage !== '') {
             logger.error(errorMessage)
             return
         }
 
-        const error2 = await updateRecordTxn(pool, ids, txn)
-        if (error2) {
-            logger.error(`Error occurs while updateRecordTxn, txn = ${ txn }, ids in ${ ids }`)
-            return
+        {
+            const error = await updateRecordTxn(pool, ids, txn)
+            if (error) {
+                logger.error(`Error occurs while updateRecordTxn, txn = ${ txn }, ids in ${ ids }`)
+                return
+            }
         }
+
 
     } catch (error) {
         logger.error(error)
+        // should reset oldSequenceNumber in ./data/<ADDRESS>.txt if any problem occurs after is is updated to currentSequenceNumber
+        if (oldSequenceNumber && currentSenderSequenceNumber && (Number(oldSequenceNumber) !== currentSenderSequenceNumber)) {
+            await updateSequenceNumber(senderAddress, oldSequenceNumber)
+        }
     } finally {
         pool.end();
         logger.info('---Job finished---')
