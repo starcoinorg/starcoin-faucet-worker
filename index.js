@@ -101,8 +101,7 @@ const doJob = () => {
                 network = row.network
                 ids.push(row.id)
                 addresses.push(row.address)
-                // amounts.push(row.amount * STC_SCALLING_FACTOR)
-                amounts.push(0.01 * STC_SCALLING_FACTOR)
+                amounts.push(row.amount * STC_SCALLING_FACTOR)
             });
             // update records during transfer, in case other job re-handle them
             connection.query(
@@ -122,24 +121,8 @@ const doJob = () => {
                             [status, ids],
                             (err, rows) => {
                                 if (err) throw err;
-                                // connection.end();
+                                connection.end();
                                 logger.info('---Job finished---')
-                                // reset data for test
-                                const network = 'barnard'
-                                const nodeUrl = `https://${ network }-seed.starcoin.org`
-                                const provider = new providers.JsonRpcProvider(nodeUrl);
-                                provider.getSequenceNumber(SENDERS[0].address).then((senderSequenceNumber) => {
-                                    logger.info({ senderSequenceNumber })
-                                    connection.query(
-                                        'update faucet_address set status = 0, transfer_retry = 0 where id in (?)',
-                                        [ids],
-                                        (err, rows) => {
-                                            if (err) throw err;
-                                            connection.end();
-                                            logger.info('---Data reseted---')
-                                        }
-                                    )
-                                })
                             }
                         )
                     })
@@ -175,10 +158,9 @@ const readSequenceNumber = async (address) => {
 
     try {
         const data = await fs.promises.readFile(filePath);
-        console.log(data.toString());
         return data.toString()
     } catch (error) {
-        console.error(`Got an error trying to read the file: ${ error.message }`);
+        logger.error(`Got an error trying to read the file: ${ error.message }`);
         return "-1"
     }
 }
