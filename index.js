@@ -5,6 +5,10 @@ const { createLogger, format, transports } = require("winston");
 const { combine, label, timestamp, printf } = format;
 const nodemailer = require('nodemailer');
 
+const STATUS = {
+    'NEW': 0,
+    'SUCCEED': 20,
+}
 const emailSender = process.env.STARCOIN_FAUCET_WORKER_EMAIL_SENDER || ''
 const emailSenderPwd = process.env.STARCOIN_FAUCET_WORKER_EMAIL_SENDER_PWD || ''
 const emailReceivers = JSON.parse(process.env.STARCOIN_FAUCET_WORKER_EMAIL_RECEIVERS || []).join(",")
@@ -75,43 +79,56 @@ const doJob = () => {
 
     const senderIndex = args['senderIndex'] || 0
     const limit = args['count'] || 5
-    connection.query(`SELECT id, network, address, amount from faucet_address where status=0 and transfer_retry=0 LIMIT ${ limit }`, (err, rows) => {
-        if (err) throw err;
-        if (rows.length === 0) {
-            logger.info('No rows to handle!')
-            return;
-        }
-        logger.info(`${ rows.length } records found.`)
-        const ids = []
-        const addresses = []
-        const amounts = []
-        let network = ''
-        rows.forEach(row => {
-            network = row.network
-            ids.push(row.id)
-            addresses.push(row.address)
-            // amounts.push(row.amount * STC_SCALLING_FACTOR)
-            amounts.push(0.01 * STC_SCALLING_FACTOR)
-        });
-        connection.query('update faucet_address set transfer_retry = 1 where id in (?)', [ids], (err, rows) => {
+    // Only handle the records: status = 0 and transfer_retry = 0
+    connection.query(
+        'SELECT id, network, address, amount from faucet_address where status = ? and transfer_retry = 0 LIMIT ?',
+        [STATUS['NEW'], limit],
+        (err, rows) => {
+            console.log(rows)
             if (err) throw err;
-            const sender = SENDERS[senderIndex]
-            batchTransfer(network, sender, addresses, amounts).then((errorMessage) => {
-                if (errorMessage !== '') {
-                    logger.error(errorMessage)
+            if (rows.length === 0) {
+                logger.info('No rows to handle!')
+                return;
+            }
+            logger.info(`${ rows.length } records found.`)
+            const ids = []
+            const addresses = []
+            const amounts = []
+            let network = ''
+            rows.forEach(row => {
+                network = row.network
+                ids.push(row.id)
+                addresses.push(row.address)
+                // amounts.push(row.amount * STC_SCALLING_FACTOR)
+                amounts.push(0.01 * STC_SCALLING_FACTOR)
+            });
+            // update records during transfer, in case other job re-handle them
+            connection.query(
+                'update faucet_address set transfer_retry = 1 where id in (?)',
+                [ids],
+                (err, rows) => {
+                    if (err) throw err;
+                    const sender = SENDERS[senderIndex]
+                    batchTransfer(network, sender, addresses, amounts).then((errorMessage) => {
+                        if (errorMessage !== '') {
+                            logger.error(errorMessage)
+                        }
+                        const status = STATUS['SUCCEED']
+                        // update status
+                        connection.query(
+                            'update faucet_address set status = ? where id in (?)',
+                            [status, ids],
+                            (err, rows) => {
+                                if (err) throw err;
+                                connection.end();
+                                logger.info('---Job finished---')
+                            }
+                        )
+                    })
                 }
-                logger.info('---Job finished---')
-            })
-            const status = '20'
-            connection.query('update faucet_address set status = ? where id in (?)', [status, ids], (err, rows) => {
-                if (err) throw err;
-                connection.end();
-            })
-
-        })
-
-    });
-
+            )
+        }
+    );
 }
 
 const checkBalance = async (provider, senderAddress, amountArray) => {
