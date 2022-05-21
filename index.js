@@ -1,4 +1,4 @@
-const mysql = require('mysql');
+const mysql = require('mysql2/promise');
 const minimist = require('minimist');
 const fs = require("fs");
 const path = require('path');
@@ -9,6 +9,7 @@ const nodemailer = require('nodemailer');
 
 const STATUS = {
     'NEW': 0,
+    'HANDLING': 1,
     'SUCCEED': 20,
 }
 const emailSender = process.env.STARCOIN_FAUCET_WORKER_EMAIL_SENDER || ''
@@ -22,8 +23,6 @@ const transporter = nodemailer.createTransport({
         pass: emailSenderPwd
     }
 });
-
-
 
 const alertAdmin = (message) => {
     //  send email
@@ -75,63 +74,6 @@ const NETWORK_MAP = {
     'barnard': 251
 }
 
-const doJob = () => {
-    logger.info('---Job start---')
-    const args = minimist(process.argv.slice(2))
-
-    const senderIndex = args['senderIndex'] || 0
-    const limit = args['count'] || 5
-    // Only handle the records: status = 0 and transfer_retry = 0
-    connection.query(
-        'SELECT id, network, address, amount from faucet_address where status = ? and transfer_retry = 0 LIMIT ?',
-        [STATUS['NEW'], limit],
-        (err, rows) => {
-            console.log(rows)
-            if (err) throw err;
-            if (rows.length === 0) {
-                logger.info('No rows to handle!')
-                return;
-            }
-            logger.info(`${ rows.length } records found.`)
-            const ids = []
-            const addresses = []
-            const amounts = []
-            let network = ''
-            rows.forEach(row => {
-                network = row.network
-                ids.push(row.id)
-                addresses.push(row.address)
-                amounts.push(row.amount * STC_SCALLING_FACTOR)
-            });
-            // update records during transfer, in case other job re-handle them
-            connection.query(
-                'update faucet_address set transfer_retry = 1 where id in (?)',
-                [ids],
-                (err, rows) => {
-                    if (err) throw err;
-                    const sender = SENDERS[senderIndex]
-                    batchTransfer(network, sender, addresses, amounts).then((errorMessage) => {
-                        if (errorMessage !== '') {
-                            logger.error(errorMessage)
-                        }
-                        const status = STATUS['SUCCEED']
-                        // update status
-                        connection.query(
-                            'update faucet_address set status = ? where id in (?)',
-                            [status, ids],
-                            (err, rows) => {
-                                if (err) throw err;
-                                connection.end();
-                                logger.info('---Job finished---')
-                            }
-                        )
-                    })
-                }
-            )
-        }
-    );
-}
-
 const checkBalance = async (provider, senderAddress, amountArray) => {
     const amountTotal = amountArray.reduce(
         (previous, current) => previous + current,
@@ -175,39 +117,20 @@ const updateSequenceNumber = async (address, content) => {
     await fs.promises.writeFile(filePath, content)
 }
 
-const checkSequenceNumber = async (senderAddress, senderSequenceNumber) => {
+const checkSequenceNumber = async (senderAddress, currentSenderSequenceNumber) => {
     const oldSequenceNumber = await readSequenceNumber(senderAddress)
-
-    if (Number(oldSequenceNumber) < senderSequenceNumber) {
+    if (Number(oldSequenceNumber) < currentSenderSequenceNumber) {
         return true
     }
     return false
 }
-const batchTransfer = async (network, sender, addressArray, amountArray) => {
-    const { address: senderAddress, privateKey: senderPrivateKey } = sender
-    const nodeUrl = `https://${ network }-seed.starcoin.org`
-    const provider = new providers.JsonRpcProvider(nodeUrl);
 
-    // check balance
-    const isOk = await checkBalance(provider, senderAddress, amountArray)
-
-    if (!isOk) {
-        return `sender ${ senderAddress } balance is not enough`
-    }
+const batchTransfer = async (nodeUrl, provider, network, senderAddress, senderPrivateKey, senderSequenceNumber, addressArray, amountArray) => {
     const functionId = '0x1::TransferScripts::batch_peer_to_peer_v2'
     const typeArgs = ['0x1::STC::STC']
     const args = [addressArray, amountArray]
 
     const scriptFunction = await utils.tx.encodeScriptFunctionByResolve(functionId, typeArgs, args, nodeUrl);
-
-    const senderSequenceNumber = await provider.getSequenceNumber(senderAddress)
-
-    const isSequenceNumberOk = await checkSequenceNumber(senderAddress, senderSequenceNumber)
-
-    if (!isSequenceNumberOk) {
-        return `sender ${ senderAddress } sequenceNumber ${ senderSequenceNumber } is used.`
-    }
-    await updateSequenceNumber(senderAddress, senderSequenceNumber.toString())
 
     const chainId = NETWORK_MAP[network];
     const nowSeconds = await provider.getNowSeconds();
@@ -238,19 +161,130 @@ const batchTransfer = async (network, sender, addressArray, amountArray) => {
     logger.info(`gas_used: ${ txnInfo.gas_used }`)
     logger.info(`block_number: ${ txnInfo.block_number }`)
 
-    return ''
+    return ['', txn.transaction_hash]
 }
 
-const connection = mysql.createConnection({
-    host: MYSQL_HOST,
-    user: MYSQL_USER,
-    password: MYSQL_PWD,
-    database: MYSQL_DB
-});
+async function getNewRecords(pool, limit) {
+    // Only handle the records: status = 0 and transfer_retry = 0
+    try {
+        const result = await pool.query(
+            'SELECT id, network, address, amount from faucet_address where status = ? and transfer_retry = 0 LIMIT ?',
+            [STATUS['NEW'], limit]
+        );
+        return result;
+    } catch (err) {
+        logger.error(err)
+        return [[], null];
+    }
+}
 
-connection.connect((err) => {
-    if (err) throw err;
-    logger.info('Connected to MySQL Server!');
-    doJob();
-});
+async function updateRecordStatus(pool, ids) {
+    try {
+        console.log('updateRecordStatus', ids)
+        await pool.query(
+            'update faucet_address set status = ? where id in (?)',
+            [STATUS['HANDLING'], ids]
+        );
+    } catch (err) {
+        logger.error(err)
+        return err;
+    }
+}
 
+async function updateRecordTxn(pool, ids, txn) {
+    try {
+        console.log('updateRecordStatus', ids)
+        await pool.query(
+            'update faucet_address set status = ?, transfered_txn=? where id in (?)',
+            [STATUS['SUCCEED'], txn, ids]
+        );
+    } catch (err) {
+        logger.error(err)
+        return err;
+    }
+}
+
+async function main() {
+    const pool = mysql.createPool({
+        host: MYSQL_HOST,
+        user: MYSQL_USER,
+        password: MYSQL_PWD,
+        database: MYSQL_DB
+    });
+    try {
+        logger.info('---Job start---')
+
+        const args = minimist(process.argv.slice(2))
+        const senderIndex = args['senderIndex'] || 0
+        const limit = args['count'] || 5
+        const [rows, _] = await getNewRecords(pool, limit)
+        console.log({ rows })
+        if (rows.length === 0) {
+            logger.info('No rows to handle!')
+            return;
+        }
+        logger.info(`${ rows.length } records found.`)
+        const ids = []
+        const addresses = []
+        const amounts = []
+        let network = ''
+        rows.forEach(row => {
+            network = row.network
+            ids.push(row.id)
+            addresses.push(row.address)
+            amounts.push(row.amount * STC_SCALLING_FACTOR)
+        });
+
+        const nodeUrl = `https://${ network }-seed.starcoin.org`
+        const provider = new providers.JsonRpcProvider(nodeUrl);
+
+        const sender = SENDERS[senderIndex]
+
+        const { address: senderAddress, privateKey: senderPrivateKey } = sender
+
+        // check sequenceNumber
+        const senderSequenceNumber = await provider.getSequenceNumber(senderAddress)
+        const isSequenceNumberOk = await checkSequenceNumber(senderAddress, senderSequenceNumber)
+        if (!isSequenceNumberOk) {
+            logger.error(`sender ${ senderAddress } sequenceNumber ${ senderSequenceNumber } is used.`)
+            return;
+        }
+        await updateSequenceNumber(senderAddress, senderSequenceNumber.toString())
+
+
+        // check balance
+        const isBalanceOk = await checkBalance(provider, senderAddress, amounts)
+        if (!isBalanceOk) {
+            logger.error(`sender ${ senderAddress } balance is not enough`)
+            return;
+        }
+
+        // update status=1
+        const error = await updateRecordStatus(pool, ids)
+        if (error) {
+            logger.error(`Error occurs while updateRecordStatus = ${ STATUS['HANDLING'] }, ids in ${ ids }`)
+            return
+        }
+
+        const [errorMessage, txn] = await batchTransfer(nodeUrl, provider, network, senderAddress, senderPrivateKey, senderSequenceNumber, addresses, amounts)
+        console.log({ errorMessage, txn })
+        if (errorMessage !== '') {
+            logger.error(errorMessage)
+            return
+        }
+
+        const error2 = await updateRecordTxn(pool, ids, txn)
+        if (error2) {
+            logger.error(`Error occurs while updateRecordTxn, txn = ${ txn }, ids in ${ ids }`)
+            return
+        }
+
+    } catch (error) {
+        logger.error(error)
+    } finally {
+        pool.end();
+        logger.info('---Job finished---')
+    }
+}
+
+main();

@@ -20,6 +20,14 @@ Tips: [Generate Google account app passwords](https://stackoverflow.com/a/454799
 npm install
 ```
 
+# How to prevent current cron job submiting a transaction with same sequence number with the transaction submitted by the previous cron job while it is not finished yet.
+
+The sender account's current sequence number is saved in `./data/<ADDRESS>.txt` locally.
+
+It is used to prevent a cron job submit a trnasaction onto the chain with the same sequence number(locally and on the chain) and will be failed.
+
+If the sequence number are equaly, the current job will abort immediately, and wait for the next cron job.
+
 # How to use
 
 1. Normally, we can batch transfer 5 new records each time with 1 sender.
