@@ -24,12 +24,12 @@ const transporter = nodemailer.createTransport({
     }
 });
 
-const alertAdmin = (message) => {
+const alertAdmin = (title, message) => {
     //  send email
     const mailOptions = {
         from: 'Starcoin-Faucet-Worker',
         to: emailReceivers,
-        subject: message,
+        subject: title,
         text: message
     };
     transporter.sendMail(mailOptions, function (error, info) {
@@ -87,7 +87,7 @@ const NETWORK_MAP = {
     }
 }
 
-const checkBalance = async (provider, senderAddress, amountArray) => {
+const checkBalance = async (provider, senderAddress, amountArray, network) => {
     const amountTotal = amountArray.reduce(
         (previous, current) => previous + current,
         0
@@ -95,14 +95,13 @@ const checkBalance = async (provider, senderAddress, amountArray) => {
     const senderBalance = await provider.getBalance(senderAddress)
     // alert balance will be not enough
     if (senderBalance < 1000 * STC_SCALLING_FACTOR) {
-        alertAdmin(`Sender ${ senderAddress } balance is less than 1000 STC`)
+        alertAdmin(`Warning: Starcoin Faucet in ${ network }`, `Sender ${ senderAddress } balance is less than 1000 STC`)
     }
     // Assuming maximum gas fee is 1 STC
     if ((amountTotal + (1 * STC_SCALLING_FACTOR)) < senderBalance) {
         return true
     }
-
-    alertAdmin(`Sender ${ senderAddress } balance is less than ${ (amountTotal / STC_SCALLING_FACTOR).toFixed(0) } STC`)
+    alertAdmin(`Error: Starcoin Faucet in ${ network }`, `Sender ${ senderAddress } balance is less than ${ (amountTotal / STC_SCALLING_FACTOR).toFixed(0) } STC`)
 
     return false
 }
@@ -205,7 +204,7 @@ const updateRecordHandling = async (pool, ids) => {
 const updateRecordTxn = async (pool, ids, txn) => {
     try {
         await pool.query(
-            'update faucet_address set status = ?, transfered_txn=? where id in (?)',
+            'update faucet_address set status = ?, transfered_txn=?, transfered_at = now() where id in (?)',
             [STATUS['SUCCEED'], txn, ids]
         );
     } catch (err) {
@@ -242,8 +241,7 @@ const main = async () => {
         rows.forEach(row => {
             ids.push(row.id)
             addresses.push(row.address)
-            // amounts.push(row.amount * STC_SCALLING_FACTOR)
-            amounts.push(0.1 * STC_SCALLING_FACTOR)
+            amounts.push(row.amount * STC_SCALLING_FACTOR)
         });
         logger.info(addresses)
         const nodeUrl = NETWORK_MAP[network]?.url
@@ -263,31 +261,27 @@ const main = async () => {
 
 
         // check balance
-        const isBalanceOk = await checkBalance(provider, senderAddress, amounts)
+        const isBalanceOk = await checkBalance(provider, senderAddress, amounts, network)
         if (!isBalanceOk) {
-            logger.error(`sender ${ senderAddress } balance is not enough`)
-            return;
+            throw (`sender ${ senderAddress } balance is not enough`)
         }
 
         // update status=1
         const error = await updateRecordHandling(pool, ids)
         if (error) {
-            logger.error(`Error occurs while updateRecordHandling, ids in ${ ids }`)
-            return
+            throw (`Error occurs while updateRecordHandling, ids in ${ ids }`)
         }
 
         const chainId = NETWORK_MAP[network]?.chainId
         const [errorMessage, txn] = await batchTransfer(nodeUrl, provider, chainId, senderAddress, senderPrivateKey, currentSenderSequenceNumber, addresses, amounts)
         if (errorMessage !== '') {
-            logger.error(errorMessage)
-            return
+            throw (errorMessage)
         }
 
         {
             const error = await updateRecordTxn(pool, ids, txn)
             if (error) {
-                logger.error(`Error occurs while updateRecordTxn, txn = ${ txn }, ids in ${ ids }`)
-                return
+                throw (`Error occurs while updateRecordTxn, txn = ${ txn }, ids in ${ ids }`)
             }
         }
 
