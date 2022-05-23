@@ -1,2 +1,2 @@
 # handle one batch transfer every minutes
-* * * * * root /usr/local/bin/node /app/index.js --network=barnard --senderIndex=0 --count=10 >> /app/cron.log 2>&1
+* * * * * root /usr/local/bin/node /app/index.js --network=barnard --senderIndex=0 --count=50 >> /app/cron.log 2>&1
