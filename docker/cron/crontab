@@ -1,0 +1,2 @@
+# handle one batch transfer every minutes
+* * * * * root /usr/local/bin/node /app/index.js >> /app/cron.log 2>&1
