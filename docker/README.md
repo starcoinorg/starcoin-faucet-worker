@@ -24,7 +24,7 @@
    `docker exec -it <CONTAINER_ID> /bin/bash`
 
 7. tag
-   `docker tag starcoin/starcoin-faucet-worker:latest starcoin/starcoin-faucet-worker:0.1.0`
+   `docker tag starcoin/starcoin-faucet-worker:latest starcoin/starcoin-faucet-worker:1.0.2`
 
 8. publish to docker hub
-   `docker push starcoin/starcoin-faucet-worker:0.1.0`
+   `docker push starcoin/starcoin-faucet-worker:1.0.2`

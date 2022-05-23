@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: faucet-worker-deployment
+  labels:
+    app: faucet-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: faucet-worker
+  template:
+    metadata:
+      labels:
+        app: faucet-worker
+    spec:
+      containers:
+        - name: faucet-worker
+          image: starcoin/starcoin-faucet-worker:1.0.2
+          env:
+            - name: STARCOIN_FAUCET_WORKER_MYSQL_HOST
+              value: "starcoin-db-2.c0bz9kehdvnb.ap-northeast-1.rds.amazonaws.com"
+            - name: STARCOIN_FAUCET_WORKER_MYSQL_PORT
+              value: "3306"
+            - name: STARCOIN_FAUCET_WORKER_MYSQL_DB
+              value: "faucet"
+            - name: STARCOIN_FAUCET_WORKER_MYSQL_USER
+              value: "starcoin"
+            - name: STARCOIN_FAUCET_WORKER_MYSQL_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-pwd
+                  key: password
+            - name: STARCOIN_FAUCET_WORKER_SENDER_PRIVATE_KEYS_BARNARD
+              valueFrom:
+                secretKeyRef:
+                  name: faucet-worker-sender-private-keys-barnard
+                  key: json
+            - name: STARCOIN_FAUCET_WORKER_SENDER_PRIVATE_KEYS_PROXIMA
+              valueFrom:
+                secretKeyRef:
+                  name: faucet-worker-sender-private-keys-proxima
+                  key: json
+            - name: STARCOIN_FAUCET_WORKER_SENDER_PRIVATE_KEYS_HALLEY
+              valueFrom:
+                secretKeyRef:
+                  name: faucet-worker-sender-private-keys-halley
+                  key: json
+            - name: STARCOIN_FAUCET_WORKER_EMAIL_SENDER
+              valueFrom:
+                secretKeyRef:
+                  name: faucet-worker-email-sender
+                  key: email
+            - name: STARCOIN_FAUCET_WORKER_EMAIL_SENDER_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: faucet-worker-email-sender-pwd
+                  key: pwd
+            - name: STARCOIN_FAUCET_WORKER_EMAIL_RECEIVERS
+              valueFrom:
+                secretKeyRef:
+                  name: faucet-worker-email-receivers
+                  key: emails
