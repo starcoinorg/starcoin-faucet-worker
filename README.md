@@ -6,10 +6,12 @@ export STARCOIN_FAUCET_WORKER_MYSQL_PORT=3306
 export STARCOIN_FAUCET_WORKER_MYSQL_USER=
 export STARCOIN_FAUCET_WORKER_MYSQL_PWD=
 export STARCOIN_FAUCET_WORKER_MYSQL_DB=
-export STARCOIN_FAUCET_WORKER_SENDERS=[{\"address\":ADDRESS1\"\",\"privateKey\":\"PRIVATEKEY1\"},{\"address\":ADDRESS2\"\",\"privateKey\":\"PRIVATEKEY2\"}]
+export STARCOIN_FAUCET_WORKER_SENDER_PRIVATE_KEYS_BARNARD=[\"<PRIVATEKEY1>\",\"<PRIVATEKEY2>\"]
+export STARCOIN_FAUCET_WORKER_SENDER_PRIVATE_KEYS_PROXIMA=[\"<PRIVATEKEY1>\",\"<PRIVATEKEY2>\"]
+export STARCOIN_FAUCET_WORKER_SENDER_PRIVATE_KEYS_HALLEY=[\"<PRIVATEKEY1>\",\"<PRIVATEKEY2>\"]
 export STARCOIN_FAUCET_WORKER_EMAIL_SENDER=
 export STARCOIN_FAUCET_WORKER_EMAIL_SENDER_PWD=
-export STARCOIN_FAUCET_WORKER_EMAIL_RECEIVERS=[\"EMAIL1\",\"EMAIL2\"]
+export STARCOIN_FAUCET_WORKER_EMAIL_RECEIVERS=[\"<EMAIL1>\",\"<EMAIL2>\"]
 ```
 
 Tips: [Generate Google account app passwords](https://stackoverflow.com/a/45479968/12454870)
@@ -33,7 +35,7 @@ If the sequence number are equaly, the current job will abort immediately, and w
 1. Normally, we can batch transfer 5 new records each time with 1 sender.
 
 ```
-node index.js --senderIndex=0 --count=5
+node index.js --network=barnard --senderIndex=0 --count=5
 ```
 
 The output is:
@@ -53,9 +55,9 @@ The output is:
 2. In emergency conditions(eg. thousands of new records were added on the promotion day), we can batch handle them in parrael using multi senders.
 
 ```
-node index.js --senderIndex=0 --count=50
+node index.js --network=barnard --senderIndex=0 --count=50
 
-node index.js --senderIndex=1 --count=50
+node index.js --network=barnard --senderIndex=1 --count=50
 
 ...
 

@@ -2,7 +2,7 @@ const mysql = require('mysql2/promise');
 const minimist = require('minimist');
 const fs = require("fs");
 const path = require('path');
-const { utils, providers } = require('@starcoin/starcoin')
+const { utils, providers, encoding } = require('@starcoin/starcoin')
 const { createLogger, format, transports } = require("winston");
 const { combine, label, timestamp, printf } = format;
 const nodemailer = require('nodemailer');
@@ -27,7 +27,7 @@ const transporter = nodemailer.createTransport({
 const alertAdmin = (message) => {
     //  send email
     const mailOptions = {
-        from: 'Faucet Worker',
+        from: 'Starcoin-Faucet-Worker',
         to: emailReceivers,
         subject: message,
         text: message
@@ -67,11 +67,24 @@ const MYSQL_HOST = process.env.STARCOIN_FAUCET_WORKER_MYSQL_HOST || ''
 const MYSQL_USER = process.env.STARCOIN_FAUCET_WORKER_MYSQL_USER || ''
 const MYSQL_PWD = process.env.STARCOIN_FAUCET_WORKER_MYSQL_PWD || ''
 const MYSQL_DB = process.env.STARCOIN_FAUCET_WORKER_MYSQL_DB || ''
-const SENDERS = JSON.parse(process.env.STARCOIN_FAUCET_WORKER_SENDERS || [])
 const STC_SCALLING_FACTOR = 1000000000
+
 const NETWORK_MAP = {
-    'main': 1,
-    'barnard': 251
+    "barnard": {
+        "url": "https://barnard-seed.starcoin.org",
+        "chainId": 251,
+        "senderPrivateKeys": JSON.parse(process.env.STARCOIN_FAUCET_WORKER_SENDER_PRIVATE_KEYS_BARNARD || [])
+    },
+    "proxima": {
+        "url": "https://proxima-seed.starcoin.org",
+        "chainId": 252,
+        "senderPrivateKeys": JSON.parse(process.env.STARCOIN_FAUCET_WORKER_SENDER_PRIVATE_KEYS_PROXIMA || [])
+    },
+    "halley": {
+        "url": "https://halley-seed.starcoin.org",
+        "chainId": 253,
+        "senderPrivateKeys": JSON.parse(process.env.STARCOIN_FAUCET_WORKER_SENDER_PRIVATE_KEYS_HALLEY || [])
+    }
 }
 
 const checkBalance = async (provider, senderAddress, amountArray) => {
@@ -163,12 +176,12 @@ const batchTransfer = async (nodeUrl, provider, chainId, senderAddress, senderPr
     }
 }
 
-const getNewRecords = async (pool, limit) => {
+const getNewRecords = async (pool, network, limit) => {
     // Only handle the records: status = 0 and transfer_retry = 0
     try {
         const result = await pool.query(
-            'SELECT id, network, address, amount from faucet_address where status = ? and transfer_retry = 0 LIMIT ?',
-            [STATUS['NEW'], limit]
+            'SELECT id, address, amount from faucet_address where network = ? and status = ? and transfer_retry = 0 LIMIT ?',
+            [network, STATUS['NEW'], limit]
         );
         return result;
     } catch (err) {
@@ -212,10 +225,12 @@ const main = async () => {
     try {
         logger.info('---Job start---')
         const args = minimist(process.argv.slice(2))
+        const network = args['network'] || 'barnard'
         const senderIndex = args['senderIndex'] || 0
         const limit = args['count'] || 5
-        const [rows, _] = await getNewRecords(pool, limit)
-        console.log({ rows })
+        const senderPrivateKeys = NETWORK_MAP[network]?.senderPrivateKeys
+
+        const [rows, _] = await getNewRecords(pool, network, limit)
         if (rows.length === 0) {
             logger.info('No rows to handle!')
             return;
@@ -224,27 +239,24 @@ const main = async () => {
         const ids = []
         const addresses = []
         const amounts = []
-        let network = ''
         rows.forEach(row => {
-            network = row.network
             ids.push(row.id)
             addresses.push(row.address)
-            amounts.push(row.amount * STC_SCALLING_FACTOR)
+            // amounts.push(row.amount * STC_SCALLING_FACTOR)
+            amounts.push(0.1 * STC_SCALLING_FACTOR)
         });
-
-        const nodeUrl = `https://${ network }-seed.starcoin.org`
+        logger.info(addresses)
+        const nodeUrl = NETWORK_MAP[network]?.url
         const provider = new providers.JsonRpcProvider(nodeUrl);
 
-        const sender = SENDERS[senderIndex]
-
-        senderAddress = sender.address
-        senderPrivateKey = sender.privateKey
+        senderPrivateKey = senderPrivateKeys[senderIndex]
+        const senderPublicKey = await encoding.privateKeyToPublicKey(senderPrivateKey)
+        senderAddress = encoding.publicKeyToAddress(senderPublicKey)
         // check sequenceNumber
         oldSequenceNumber = await readSequenceNumber(senderAddress)
         currentSenderSequenceNumber = await provider.getSequenceNumber(senderAddress)
-        console.log({ oldSequenceNumber, currentSenderSequenceNumber })
         if (!(Number(oldSequenceNumber) < currentSenderSequenceNumber)) {
-            logger.error(`sender ${ senderAddress } sequenceNumber ${ currentSenderSequenceNumber } is used.`)
+            logger.error(`sender ${ senderAddress } sequenceNumber ${ currentSenderSequenceNumber } is outdated.`)
             return;
         }
         await updateSequenceNumber(senderAddress, currentSenderSequenceNumber.toString())
@@ -264,7 +276,8 @@ const main = async () => {
             return
         }
 
-        const [errorMessage, txn] = await batchTransfer(nodeUrl, provider, NETWORK_MAP[network], senderAddress, senderPrivateKey, currentSenderSequenceNumber, addresses, amounts)
+        const chainId = NETWORK_MAP[network]?.chainId
+        const [errorMessage, txn] = await batchTransfer(nodeUrl, provider, chainId, senderAddress, senderPrivateKey, currentSenderSequenceNumber, addresses, amounts)
         if (errorMessage !== '') {
             logger.error(errorMessage)
             return
