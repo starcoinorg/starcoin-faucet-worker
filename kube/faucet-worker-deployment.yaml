@@ -19,7 +19,7 @@ spec:
           image: starcoin/starcoin-faucet-worker:1.1.0
           env:
             - name: STARCOIN_FAUCET_WORKER_MYSQL_HOST
-              value: "starcoin-db-2.c0bz9kehdvnb.ap-northeast-1.rds.amazonaws.com"
+              value: "starcoin-db-2.czftx6muneg7.ap-northeast-1.rds.amazonaws.com"
             - name: STARCOIN_FAUCET_WORKER_MYSQL_PORT
               value: "3306"
             - name: STARCOIN_FAUCET_WORKER_MYSQL_DB
